@@ -3,7 +3,7 @@
 Plugin Name: Database Users for YOURLS
 Plugin URI: https://github.com/RayHollister/database-users-for-YOURLS
 Description: Store YOURLS user credentials in the database and provide management tools.
-Version: 1.1.1
+Version: 1.2.0
 Author: Ray Hollister
 Author URI: https://rayhollister.com/
 */
@@ -25,9 +25,10 @@ yourls_add_filter( 'admin_sublinks', 'db_users_move_menu_link' );
  * @return void
  */
 function db_users_bootstrap() {
-    db_users_ensure_table_exists();
-    db_users_import_legacy_credentials();
-    db_users_refresh_credentials_cache();
+    $created  = db_users_ensure_table_exists();
+    $imported = db_users_import_legacy_credentials();
+
+    db_users_initialize_credentials_cache( $created || $imported );
 }
 
 /**
@@ -49,11 +50,40 @@ function db_users_db() {
 }
 
 /**
- * Ensure the credential table exists.
+ * Retrieve a stored plugin option.
  *
+ * @param string $name
+ * @param mixed $default
+ * @return mixed
+ */
+function db_users_get_option( $name, $default = null ) {
+    $value = yourls_get_option( $name );
+
+    return $value === false ? $default : $value;
+}
+
+/**
+ * Persist a plugin option value.
+ *
+ * @param string $name
+ * @param mixed  $value
  * @return void
  */
+function db_users_set_option( $name, $value ) {
+    yourls_update_option( $name, $value );
+}
+
+/**
+ * Ensure the credential table exists.
+ *
+ * @return bool True when the table creation SQL ran.
+ */
 function db_users_ensure_table_exists() {
+    $option_flag = (int) db_users_get_option( 'db_users_table_created', 0 );
+    if( $option_flag === 1 ) {
+        return false;
+    }
+
     $table = db_users_table_name();
 
     $sql = 'CREATE TABLE IF NOT EXISTS `' . $table . '` (' .
@@ -67,39 +97,56 @@ function db_users_ensure_table_exists() {
         'UNIQUE KEY `user_login` (`user_login`)' .
     ') DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;';
 
-    db_users_db()->perform( $sql );
+    try {
+        db_users_db()->perform( $sql );
+        db_users_set_option( 'db_users_table_created', 1 );
+        return true;
+    } catch ( \Exception $e ) {
+        yourls_debug_log( 'db-users table creation failed: ' . $e->getMessage() );
+        return false;
+    }
 }
 
 /**
  * Import credentials from config.php if table is empty.
  *
- * @return void
+ * @return bool True when any credentials were imported.
  */
 function db_users_import_legacy_credentials() {
+    $option_flag = (int) db_users_get_option( 'db_users_legacy_imported', 0 );
+    if( $option_flag === 1 ) {
+        return false;
+    }
+
     $table = db_users_table_name();
     $count = (int) db_users_db()->fetchValue( "SELECT COUNT(*) FROM `$table`" );
 
-    if( $count > 0 ) {
-        return;
-    }
+    $imported = false;
 
-    global $yourls_user_passwords;
-    if( empty( $yourls_user_passwords ) || !is_array( $yourls_user_passwords ) ) {
-        return;
-    }
+    if( $count === 0 ) {
+        global $yourls_user_passwords;
 
-    $now = db_users_now();
+        if( !empty( $yourls_user_passwords ) && is_array( $yourls_user_passwords ) ) {
+            $now = db_users_now();
 
-    foreach( $yourls_user_passwords as $username => $password ) {
-        $username = db_users_sanitize_username( $username );
-        if( $username === '' ) {
-            continue;
+            foreach( $yourls_user_passwords as $username => $password ) {
+                $username = db_users_sanitize_username( $username );
+                if( $username === '' ) {
+                    continue;
+                }
+
+                $stored_password = db_users_normalize_password_storage( $password );
+                // Preserve current access level for existing users.
+                if( db_users_insert_user( $username, $stored_password, 'admin', $now ) ) {
+                    $imported = true;
+                }
+            }
         }
-
-        $stored_password = db_users_normalize_password_storage( $password );
-        // Preserve current access level for existing users.
-        db_users_insert_user( $username, $stored_password, 'admin', $now );
     }
+
+    db_users_set_option( 'db_users_legacy_imported', 1 );
+
+    return $imported;
 }
 
 /**
@@ -124,7 +171,61 @@ function db_users_refresh_credentials_cache() {
     $GLOBALS['yourls_user_passwords'] = $credentials;
     $GLOBALS['db_users_roles']         = $roles;
 
+    db_users_store_cached_credentials_payload( $credentials, $roles );
+
     return $credentials;
+}
+
+/**
+ * Initialize cached credentials, optionally forcing a refresh.
+ *
+ * @param bool $force_refresh
+ * @return array<string,string>
+ */
+function db_users_initialize_credentials_cache( $force_refresh = false ) {
+    if( $force_refresh ) {
+        return db_users_refresh_credentials_cache();
+    }
+
+    $payload = db_users_get_cached_credentials_payload();
+
+    if( is_array( $payload ) ) {
+        $credentials = isset( $payload['credentials'] ) && is_array( $payload['credentials'] ) ? $payload['credentials'] : [];
+        $roles       = isset( $payload['roles'] ) && is_array( $payload['roles'] ) ? $payload['roles'] : [];
+
+        $GLOBALS['yourls_user_passwords'] = $credentials;
+        $GLOBALS['db_users_roles']         = $roles;
+
+        return $credentials;
+    }
+
+    return db_users_refresh_credentials_cache();
+}
+
+/**
+ * Fetch cached credentials payload from options.
+ *
+ * @return array<string,mixed>|null
+ */
+function db_users_get_cached_credentials_payload() {
+    $payload = db_users_get_option( 'db_users_credentials_cache' );
+
+    return is_array( $payload ) ? $payload : null;
+}
+
+/**
+ * Store credential and role cache in options.
+ *
+ * @param array<string,string> $credentials
+ * @param array<string,string> $roles
+ * @return void
+ */
+function db_users_store_cached_credentials_payload( array $credentials, array $roles ) {
+    db_users_set_option( 'db_users_credentials_cache', [
+        'credentials' => $credentials,
+        'roles'       => $roles,
+        'updated_at'  => db_users_now(),
+    ] );
 }
 
 /**

@@ -13,6 +13,7 @@ Database Users replaces the static credential array in `user/config.php` with a 
 - Provides a self-service password change form for the currently logged-in account.
 - Normalizes hashes to YOURLS-style `phpass:` values while still accepting `md5:` and plain strings.
 - Populates the `YOURLS_USER_ROLE` constant at login so the rest of your install can respect roles.
+- Persists migration flags and a serialized credential cache in YOURLS options to avoid repeated SQL during redirect traffic. (Thanks to [@ozh](https://github.com/ozh) for catching this!)
 
 ## Requirements
 - YOURLS 1.8 or newer (other versions are untested).
