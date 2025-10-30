@@ -1,9 +1,9 @@
 <?php
 /*
 Plugin Name: Database Users for YOURLS
-Plugin URI: https://go.wjct.org
+Plugin URI: https://github.com/RayHollister/database-users-for-YOURLS
 Description: Store YOURLS user credentials in the database and provide management tools.
-Version: 1.1.0
+Version: 1.1.1
 Author: Ray Hollister
 */
 
