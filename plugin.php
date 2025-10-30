@@ -5,6 +5,7 @@ Plugin URI: https://github.com/RayHollister/database-users-for-YOURLS
 Description: Store YOURLS user credentials in the database and provide management tools.
 Version: 1.1.1
 Author: Ray Hollister
+Author URI: https://rayhollister.com/
 */
 
 // No direct access.
