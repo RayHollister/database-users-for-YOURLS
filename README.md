@@ -2,6 +2,10 @@
 
 Database Users replaces the static credential array in `user/config.php` with a database-backed user table and a lightweight administration panel. Activate it to keep logins inside YOURLS, grant a password self-service form, and stay compatible with existing hashing schemes.
 
+## Screenshot
+
+![Database Users plugin screenshot](screenshot-1.png)
+
 ## Features
 - Creates and maintains the `<prefix>user_credentials` table for logins, roles, and timestamps.
 - Imports the legacy `$yourls_user_passwords` array the first time the table is empty, preserving existing admins.
