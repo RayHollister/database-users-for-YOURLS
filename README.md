@@ -43,7 +43,6 @@ Records live in `<prefix>user_credentials` with columns for `user_login`, `user_
 
 ## Roadmap
 - Allow deleting users from the interface.
-- Support custom roles beyond `admin` and `user`.
 
 ## Credits
 Built and maintained by Ray Hollister.

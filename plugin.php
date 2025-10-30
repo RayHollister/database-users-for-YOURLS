@@ -3,7 +3,7 @@
 Plugin Name: Database Users
 Plugin URI: https://go.wjct.org
 Description: Store YOURLS user credentials in the database and provide management tools.
-Version: 1.0.1
+Version: 1.0.2
 Author: Ray Hollister
 */
 
@@ -410,9 +410,15 @@ function db_users_render_admin_page() {
     .db-users-table tbody tr:nth-child(odd) { background: #fafafa; }
     .db-users-table .db-users-toggle { font-weight: 600; text-decoration: none; }
     .db-users-table .db-users-toggle:focus, .db-users-table .db-users-toggle:hover { text-decoration: underline; }
+    .db-users-current { font-weight: 600; color: #444; }
+    .db-users-current-note { color: #777; font-size: 0.85em; margin-left: 0.4em; }
     .db-users-edit-row { background: #fefefe; }
     .db-users-edit-row .db-users-edit-form { padding: 1em 0.4em; }
     .db-users-edit-row form p { margin: 0.4em 0; }
+    .db-users-delete-form { margin-top: 0.6em; }
+    .db-users-delete-form .button-delete { background: #e74c3c; border-color: #c0392b; color: #fff; }
+    .db-users-delete-form .button-delete:hover { background: #c0392b; }
+    .db-users-delete-form .button-delete[disabled] { opacity: 0.5; cursor: not-allowed; background: #aaa; border-color: #999; }
     </style>';
 
     foreach( $errors as $error ) {
@@ -459,6 +465,9 @@ function db_users_handle_admin_post( array &$messages, array &$errors ) {
             break;
         case 'self_update_password':
             db_users_process_self_update_action( $messages, $errors );
+            break;
+        case 'delete_user':
+            db_users_process_delete_user_action( $messages, $errors );
             break;
     }
 }
@@ -532,6 +541,11 @@ function db_users_process_update_user_action( array &$messages, array &$errors )
         return;
     }
 
+    if( defined( 'YOURLS_USER' ) && $username === YOURLS_USER ) {
+        $errors[] = yourls__( 'Use the self-service form to manage your own account.' );
+        return;
+    }
+
     $user = db_users_get_user( $username );
     if( !$user ) {
         $errors[] = yourls__( 'Unknown user.' );
@@ -577,6 +591,50 @@ function db_users_process_update_user_action( array &$messages, array &$errors )
         db_users_refresh_credentials_cache();
     } elseif( empty( $errors ) ) {
         $messages[] = yourls__( 'No changes made.' );
+    }
+}
+
+/**
+ * Process delete user request.
+ *
+ * @param array $messages
+ * @param array $errors
+ * @return void
+ */
+function db_users_process_delete_user_action( array &$messages, array &$errors ) {
+    if( !db_users_is_admin() ) {
+        $errors[] = yourls__( 'Only administrators can delete users.' );
+        return;
+    }
+
+    yourls_verify_nonce( 'db_users_delete_user' );
+
+    $username = db_users_sanitize_username( $_POST['target_user'] ?? '' );
+    if( $username === '' ) {
+        $errors[] = yourls__( 'Unknown user.' );
+        return;
+    }
+
+    if( defined( 'YOURLS_USER' ) && $username === YOURLS_USER ) {
+        $errors[] = yourls__( 'You cannot delete the account you are logged in with.' );
+        return;
+    }
+
+    if( !db_users_user_exists( $username ) ) {
+        $errors[] = yourls__( 'Unknown user.' );
+        return;
+    }
+
+    if( db_users_is_last_admin( $username ) ) {
+        $errors[] = yourls__( 'Cannot delete the last remaining administrator.' );
+        return;
+    }
+
+    if( db_users_delete_user( $username ) ) {
+        db_users_refresh_credentials_cache();
+        $messages[] = sprintf( yourls__( 'User %s deleted.' ), $username );
+    } else {
+        $errors[] = yourls__( 'Could not delete user. Check logs for details.' );
     }
 }
 
@@ -681,12 +739,26 @@ function db_users_render_admin_users_list( array $users ) {
         $updated       = yourls_esc_html( $user->updated_at );
         $role_admin    = $user->user_role === 'admin' ? 'selected="selected"' : '';
         $role_user     = $user->user_role === 'user' ? 'selected="selected"' : '';
+        $is_current    = defined( 'YOURLS_USER' ) && YOURLS_USER === $raw_username;
+        $is_last_admin = db_users_is_last_admin( $raw_username );
 
         echo '<tr>';
-        echo '<td><a href="#" class="db-users-toggle" data-target="' . $unique_id . '">' . $display_name . '</a></td>';
+        if( $is_current ) {
+            echo '<td><span class="db-users-current">' . $display_name . '</span><span class="db-users-current-note">' . yourls__( '(You)' ) . '</span></td>';
+        } else {
+            echo '<td><a href="#" class="db-users-toggle" data-target="' . $unique_id . '">' . $display_name . '</a></td>';
+        }
         echo '<td>' . yourls_esc_html( $role_label ) . '</td>';
         echo '<td>' . $updated . '</td>';
         echo '</tr>';
+
+        if( $is_current ) {
+            continue;
+        }
+
+        $delete_disabled = $is_last_admin ? ' disabled="disabled"' : '';
+        $delete_note     = $is_last_admin ? '<span class="db-users-current-note">' . yourls__( 'At least one administrator is required.' ) . '</span>' : '';
+        $confirm_text    = addslashes( sprintf( yourls__( 'Delete user %s? This cannot be undone.' ), $raw_username ) );
 
         echo '<tr id="' . $unique_id . '" class="db-users-edit-row" style="display:none">';
         echo '<td colspan="3">';
@@ -708,6 +780,12 @@ function db_users_render_admin_users_list( array $users ) {
         echo '<input type="password" class="text" name="confirm_password" autocomplete="new-password" />';
         echo '</p>';
         echo '<p><button type="submit" class="button">' . yourls__( 'Save changes' ) . '</button></p>';
+        echo '</form>';
+        echo '<form method="post" class="db-users-delete-form" onsubmit="return confirm(\'' . $confirm_text . '\');">';
+        echo '<input type="hidden" name="db_users_action" value="delete_user" />';
+        echo '<input type="hidden" name="target_user" value="' . $attr_username . '" />';
+        yourls_nonce_field( 'db_users_delete_user' );
+        echo '<button type="submit" class="button button-delete"' . $delete_disabled . '>' . yourls__( 'Delete user' ) . '</button> ' . $delete_note;
         echo '</form>';
         echo '</div>';
         echo '</td>';
@@ -862,6 +940,27 @@ function db_users_get_user( $username ) {
  */
 function db_users_user_exists( $username ) {
     return (bool) db_users_get_user( $username );
+}
+
+/**
+ * Delete a user.
+ *
+ * @param string $username
+ * @return bool
+ */
+function db_users_delete_user( $username ) {
+    $username = db_users_sanitize_username( $username );
+
+    if( $username === '' ) {
+        return false;
+    }
+
+    $sql = "DELETE FROM `" . db_users_table_name() . "` WHERE user_login = :login LIMIT 1";
+    $affected = db_users_db()->fetchAffected( $sql, [
+        'login' => $username,
+    ] );
+
+    return $affected !== false && $affected > 0;
 }
 
 /**
