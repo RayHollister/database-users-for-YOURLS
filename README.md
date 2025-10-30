@@ -41,8 +41,5 @@ Records live in `<prefix>user_credentials` with columns for `user_login`, `user_
 - If logins appear stale, trigger `db_users_refresh_credentials_cache()` or revisit the admin page to rebuild the cache.
 - Ensure the database account can create tables the first time the plugin activates; otherwise, manually run the schema from `plugin.php`.
 
-## Roadmap
-- Allow deleting users from the interface.
-
 ## Credits
-Built and maintained by Ray Hollister.
+Built and maintained by [Ray Hollister](https://rayhollister.com).

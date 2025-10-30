@@ -1,9 +1,9 @@
 <?php
 /*
-Plugin Name: Database Users
+Plugin Name: Database Users for YOURLS
 Plugin URI: https://go.wjct.org
 Description: Store YOURLS user credentials in the database and provide management tools.
-Version: 1.0.2
+Version: 1.1.0
 Author: Ray Hollister
 */
 
@@ -16,6 +16,7 @@ db_users_bootstrap();
 
 yourls_add_action( 'plugins_loaded', 'db_users_register_pages' );
 yourls_add_action( 'login', 'db_users_handle_login' );
+yourls_add_filter( 'admin_sublinks', 'db_users_move_menu_link' );
 
 /**
  * Prepare database and credential cache.
@@ -400,7 +401,7 @@ function db_users_render_admin_page() {
 
     $users = db_users_get_all_users();
 
-    echo '<h2>' . yourls__( 'Database User Management' ) . '</h2>';
+    echo '<h2>' . yourls__( 'User Accounts' ) . '</h2>';
     echo '<style>
     .db-users-form { max-width: 480px; margin: 0 0 1.5em; padding: 1em; border: 1px solid #d9d9d9; border-radius: 4px; background: #fff; }
     .db-users-form p { margin: 0.4em 0; }
@@ -415,10 +416,13 @@ function db_users_render_admin_page() {
     .db-users-edit-row { background: #fefefe; }
     .db-users-edit-row .db-users-edit-form { padding: 1em 0.4em; }
     .db-users-edit-row form p { margin: 0.4em 0; }
-    .db-users-delete-form { margin-top: 0.6em; }
+    .db-users-edit-header { display: flex; justify-content: space-between; align-items: center; gap: 1em; margin-bottom: 0.8em; }
+    .db-users-header-actions { display: flex; align-items: center; gap: 0.6em; }
+    .db-users-delete-form { margin: 0; }
     .db-users-delete-form .button-delete { background: #e74c3c; border-color: #c0392b; color: #fff; }
     .db-users-delete-form .button-delete:hover { background: #c0392b; }
     .db-users-delete-form .button-delete[disabled] { opacity: 0.5; cursor: not-allowed; background: #aaa; border-color: #999; }
+    .db-users-delete-note { color: #777; font-size: 0.85em; }
     </style>';
 
     foreach( $errors as $error ) {
@@ -757,17 +761,30 @@ function db_users_render_admin_users_list( array $users ) {
         }
 
         $delete_disabled = $is_last_admin ? ' disabled="disabled"' : '';
-        $delete_note     = $is_last_admin ? '<span class="db-users-current-note">' . yourls__( 'At least one administrator is required.' ) . '</span>' : '';
-        $confirm_text    = addslashes( sprintf( yourls__( 'Delete user %s? This cannot be undone.' ), $raw_username ) );
+        $delete_note_text = $is_last_admin ? yourls__( 'At least one administrator is required.' ) : '';
+        $confirm_text    = yourls_esc_js( sprintf( yourls__( 'Delete user %s? This cannot be undone.' ), $raw_username ) );
 
         echo '<tr id="' . $unique_id . '" class="db-users-edit-row" style="display:none">';
         echo '<td colspan="3">';
         echo '<div class="db-users-edit-form">';
+        echo '<div class="db-users-edit-header">';
+        echo '<strong>' . sprintf( yourls__( 'Editing %s' ), $display_name ) . '</strong>';
+        echo '<div class="db-users-header-actions">';
+        echo '<form method="post" class="db-users-delete-form" onsubmit="return confirm(\'' . $confirm_text . '\');">';
+        echo '<input type="hidden" name="db_users_action" value="delete_user" />';
+        echo '<input type="hidden" name="target_user" value="' . $attr_username . '" />';
+        yourls_nonce_field( 'db_users_delete_user' );
+        echo '<button type="submit" class="button button-delete"' . $delete_disabled . '>' . yourls__( 'Delete user' ) . '</button>';
+        echo '</form>';
+        if( $delete_note_text !== '' ) {
+            echo '<span class="db-users-delete-note">' . yourls_esc_html( $delete_note_text ) . '</span>';
+        }
+        echo '</div>';
+        echo '</div>';
         echo '<form method="post">';
         echo '<input type="hidden" name="db_users_action" value="update_user" />';
         echo '<input type="hidden" name="target_user" value="' . $attr_username . '" />';
         yourls_nonce_field( 'db_users_update_user' );
-        echo '<p><strong>' . sprintf( yourls__( 'Editing %s' ), $display_name ) . '</strong></p>';
         echo '<p><label>' . yourls__( 'Role' ) . '</label><br />';
         echo '<select name="new_role">';
         echo '<option value="admin" ' . $role_admin . '>' . yourls__( 'Administrator' ) . '</option>';
@@ -780,12 +797,6 @@ function db_users_render_admin_users_list( array $users ) {
         echo '<input type="password" class="text" name="confirm_password" autocomplete="new-password" />';
         echo '</p>';
         echo '<p><button type="submit" class="button">' . yourls__( 'Save changes' ) . '</button></p>';
-        echo '</form>';
-        echo '<form method="post" class="db-users-delete-form" onsubmit="return confirm(\'' . $confirm_text . '\');">';
-        echo '<input type="hidden" name="db_users_action" value="delete_user" />';
-        echo '<input type="hidden" name="target_user" value="' . $attr_username . '" />';
-        yourls_nonce_field( 'db_users_delete_user' );
-        echo '<button type="submit" class="button button-delete"' . $delete_disabled . '>' . yourls__( 'Delete user' ) . '</button> ' . $delete_note;
         echo '</form>';
         echo '</div>';
         echo '</td>';
@@ -820,6 +831,28 @@ function db_users_render_admin_users_list( array $users ) {
         });
         </script>';
     }
+}
+
+/**
+ * Move plugin admin page link under the Admin interface menu.
+ *
+ * @param array $sublinks
+ * @return array
+ */
+function db_users_move_menu_link( array $sublinks ) {
+    if( isset( $sublinks['plugins']['db_users'] ) ) {
+        $link = $sublinks['plugins']['db_users'];
+        unset( $sublinks['plugins']['db_users'] );
+        if( empty( $sublinks['plugins'] ) ) {
+            unset( $sublinks['plugins'] );
+        }
+        if( !isset( $sublinks['admin'] ) || !is_array( $sublinks['admin'] ) ) {
+            $sublinks['admin'] = [];
+        }
+        $sublinks['admin']['db_users'] = $link;
+    }
+
+    return $sublinks;
 }
 
 /**
