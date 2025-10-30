@@ -538,8 +538,6 @@ function db_users_render_admin_page() {
     if( db_users_is_admin() ) {
         db_users_render_admin_create_form();
         db_users_render_admin_users_list( $users );
-    } else {
-        echo '<p>' . yourls__( 'You do not have permission to manage other users.' ) . '</p>';
     }
 
     db_users_render_self_service_form();
